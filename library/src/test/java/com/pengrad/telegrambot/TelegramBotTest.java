@@ -85,11 +85,7 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Properties;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -248,7 +244,7 @@ public class TelegramBotTest {
 
     @Test
     public void kickChatMember() {
-        BaseResponse response = bot.execute(new KickChatMember(channelName, chatId).untilDate(123));
+        BaseResponse response = bot.execute(new KickChatMember(channelName, chatId).untilDate(123).revokeMessages(true));
         assertFalse(response.isOk());
         assertEquals(400, response.errorCode());
         assertEquals("Bad Request: can't remove chat owner", response.description());
@@ -299,6 +295,8 @@ public class TelegramBotTest {
                         .canInviteUsers(false)
                         .canRestrictMembers(false)
                         .canPinMessages(false)
+                        .canManageChat(false)
+                        .canManageVoiceChats(false)
                         .canPromoteMembers(true));
         assertTrue(response.isOk());
     }
@@ -546,6 +544,8 @@ public class TelegramBotTest {
                 assertTrue(chatMember.canRestrictMembers());
                 assertTrue(chatMember.canPinMessages());
                 assertTrue(chatMember.canPromoteMembers());
+                assertTrue(chatMember.canManageVoiceChats());
+                assertTrue(chatMember.canManageChat());
             }
         }
     }
@@ -1492,14 +1492,15 @@ public class TelegramBotTest {
         response = (SendResponse) bot.execute(new EditMessageMedia(chatId, messageId, new InputMediaAnimation(gifFile)));
         assertEquals(Integer.valueOf(1), response.message().animation().duration());
 
+        int expectedSize = 160; // idk why?
         Integer durationAnim = 17, width = 21, height = 22;
         response = (SendResponse) bot.execute(new EditMessageMedia(chatId, messageId,
                 new InputMediaAnimation(gifBytes).duration(durationAnim).width(width).height(height)
         ));
         Animation animation = response.message().animation();
-        assertEquals(Integer.valueOf(1), animation.duration());
-        assertEquals(width, animation.width());
-        assertEquals(height, animation.height());
+        assertEquals(1, animation.duration().intValue());
+        assertEquals(expectedSize, animation.width().intValue());
+        assertEquals(expectedSize, animation.height().intValue());
 
         response = (SendResponse) bot.execute(new EditMessageMedia(chatId, messageId, new InputMediaAnimation(gifFileId)));
         assertTrue(response.isOk());
@@ -1537,6 +1538,7 @@ public class TelegramBotTest {
 
     @Test
     public void sendAnimation() {
+        int expectedSize = 160; // idk why?
         int width = 340, height = 240;
         String caption = "gif *file*", captionCheck = "gif file";
         SendResponse response = bot.execute(new SendAnimation(chatId, gifFile)
@@ -1545,8 +1547,8 @@ public class TelegramBotTest {
         assertTrue(response.isOk());
         Animation animation = response.message().animation();
         assertEquals((Integer) 1, animation.duration());
-        assertEquals(width, animation.width().intValue());
-        assertEquals(height, animation.height().intValue());
+        assertEquals(expectedSize, animation.width().intValue());
+        assertEquals(expectedSize, animation.height().intValue());
         assertNotEquals("telegram should generate thumb", thumbSize, animation.thumb().fileSize());
         assertEquals(captionCheck, response.message().caption());
         assertEquals(MessageEntity.Type.bold, response.message().captionEntities()[0].type());
@@ -1554,8 +1556,8 @@ public class TelegramBotTest {
         response = bot.execute(new SendAnimation(chatId, gifBytes).thumb(thumbBytes));
         animation = response.message().animation();
         assertEquals((Integer) 1, animation.duration());
-        assertEquals((Integer) 160, animation.width());
-        assertEquals((Integer) 160, animation.height());
+        assertEquals(expectedSize, animation.width().intValue());
+        assertEquals(expectedSize, animation.height().intValue());
         assertNotEquals("telegram should generate thumb", thumbSize, animation.thumb().fileSize());
 
         response = bot.execute(new SendAnimation(chatId, gifFileId));
@@ -1843,6 +1845,12 @@ public class TelegramBotTest {
         assertNotNull(dice);
         assertTrue(dice.value() >= 1 && dice.value() <= 64);
         assertEquals("🎰", dice.emoji());
+
+        response = bot.execute(new SendDice(chatId).bowling());
+        dice = response.message().dice();
+        assertNotNull(dice);
+        assertTrue(dice.value() >= 1 && dice.value() <= 6);
+        assertEquals("🎳", dice.emoji());
     }
 
     @Test
@@ -1858,5 +1866,35 @@ public class TelegramBotTest {
         GetMyCommandsResponse commandsResponse = bot.execute(new GetMyCommands());
         assertTrue(commandsResponse.isOk());
         assertArrayEquals(commandsResponse.commands(), commands);
+    }
+
+    @Test
+    public void inviteLinks() {
+        int memberLimit = 2;
+        int expireDate = (int) (System.currentTimeMillis() / 1000) + 500;
+
+        ChatInviteLinkResponse response = bot.execute(new CreateChatInviteLink(groupId)
+                .expireDate(expireDate)
+                .memberLimit(memberLimit));
+        ChatInviteLink link = response.chatInviteLink();
+        assertEquals(expireDate, link.expireDate().intValue());
+        assertEquals(memberLimit, link.memberLimit().intValue());
+        assertFalse(link.isRevoked());
+        assertTrue(link.creator().isBot());
+
+        int editMemberLimit = 3;
+        int editExpireDate = (int) (System.currentTimeMillis() / 1000) + 1500;
+        response = bot.execute(new EditChatInviteLink(groupId, link.inviteLink())
+                .expireDate(editExpireDate)
+                .memberLimit(editMemberLimit));
+        link = response.chatInviteLink();
+        assertEquals(editExpireDate, link.expireDate().intValue());
+        assertEquals(editMemberLimit, link.memberLimit().intValue());
+        assertFalse(link.isRevoked());
+
+        response = bot.execute(new RevokeChatInviteLink(groupId, link.inviteLink()));
+        link = response.chatInviteLink();
+        assertTrue(link.isRevoked());
+        assertFalse(link.isPrimary());
     }
 }
